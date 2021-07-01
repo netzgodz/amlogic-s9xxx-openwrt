@@ -18,7 +18,6 @@ amlogic_path=${make_path}/amlogic-s9xxx
 kernel_path=${amlogic_path}/amlogic-kernel
 armbian_path=${amlogic_path}/amlogic-armbian
 uboot_path=${amlogic_path}/amlogic-u-boot
-installfiles_path=${amlogic_path}/install-program/files
 configfiles_path=${amlogic_path}/common-files
 #===== Do not modify the following parameter settings, End =======
 
@@ -27,7 +26,7 @@ BOOT_MB=256
 ROOT_MB=1024
 
 tag() {
-    echo -e " [ \033[1;36m ${1} \033[0m ]"
+    echo -e " [ \033[1;32m ${1} \033[0m ]"
 }
 
 process() {
@@ -54,7 +53,7 @@ cleanup() {
         losetup -d /dev/${x} 2>/dev/null
     done
     losetup -D
-    rm -rf ${tmp_path}
+    rm -rf ${tmp_path} 2>/dev/null
 }
 
 extract_openwrt() {
@@ -115,7 +114,7 @@ extract_openwrt() {
 extract_armbian() {
     cd ${make_path}
     build_op=${1}
-    kernel_dir="${kernel_path}/kernel/${kernel}"
+    kernel_dir="${kernel_path}/${kernel}"
     root="${tmp_path}/${kernel}/${build_op}/root"
     boot="${tmp_path}/${kernel}/${build_op}/boot"
 
@@ -147,7 +146,7 @@ extract_armbian() {
     sync
 }
 
-utils() {
+refactor_files() {
     cd ${make_path}
     build_op=${1}
     build_usekernel=${2}
@@ -155,67 +154,67 @@ utils() {
     kernel_vermaj=$(echo ${build_usekernel} | grep -oE '^[1-9].[0-9]{1,2}')
     k510_ver=${kernel_vermaj%%.*}
     k510_maj=${kernel_vermaj##*.}
-    if  [ ${k510_ver} -eq "5" ];then
+    if  [ "${k510_ver}" -eq "5" ];then
         if  [ "${k510_maj}" -ge "10" ];then
-            K510=1
+            K510="1"
         else
-            K510=0
+            K510="0"
         fi
-    elif [ ${k510_ver} -gt "5" ];then
-        K510=1
+    elif [ "${k510_ver}" -gt "5" ];then
+        K510="1"
     else
-        K510=0
+        K510="0"
     fi
 
     case "${build_op}" in
-        s905x3 | x96 | hk1 | h96)
+        s905x3 | x96 | hk1 | h96 | ugoosx3)
             FDTFILE="meson-sm1-x96-max-plus-100m.dtb"
-            U_BOOT_EXT=1
             UBOOT_OVERLOAD="u-boot-x96maxplus.bin"
             MAINLINE_UBOOT="/lib/u-boot/x96maxplus-u-boot.bin.sd.bin"
             ANDROID_UBOOT="/lib/u-boot/hk1box-bootloader.img"
+            AMLOGIC_SOC="s905x3"
             ;;
         s905x2 | x96max4g | x96max2g)
             FDTFILE="meson-g12a-x96-max.dtb"
-            U_BOOT_EXT=0
             UBOOT_OVERLOAD="u-boot-x96max.bin"
             MAINLINE_UBOOT="/lib/u-boot/x96max-u-boot.bin.sd.bin"
             ANDROID_UBOOT=""
+            AMLOGIC_SOC="s905x2"
             ;;
         s905x | hg680p | b860h)
             FDTFILE="meson-gxl-s905x-p212.dtb"
-            U_BOOT_EXT=0
             UBOOT_OVERLOAD="u-boot-p212.bin"
             MAINLINE_UBOOT=""
             ANDROID_UBOOT=""
+            AMLOGIC_SOC="s905x"
             ;;
         s905d | n1)
             FDTFILE="meson-gxl-s905d-phicomm-n1.dtb"
-            U_BOOT_EXT=0
             UBOOT_OVERLOAD="u-boot-n1.bin"
             MAINLINE_UBOOT=""
             ANDROID_UBOOT="/lib/u-boot/u-boot-2015-phicomm-n1.bin"
+            AMLOGIC_SOC="s905d"
             ;;
-        s912 | octopus)
+        s912 | h96proplus | octopus)
             FDTFILE="meson-gxm-octopus-planet.dtb"
-            U_BOOT_EXT=0
             UBOOT_OVERLOAD="u-boot-zyxq.bin"
             MAINLINE_UBOOT=""
             ANDROID_UBOOT=""
+            AMLOGIC_SOC="s912"
             ;;
         s922x | belink | belinkpro | ugoos)
             FDTFILE="meson-g12b-gtking-pro.dtb"
-            U_BOOT_EXT=1
             UBOOT_OVERLOAD="u-boot-gtkingpro.bin"
             MAINLINE_UBOOT="/lib/u-boot/gtkingpro-u-boot.bin.sd.bin"
             ANDROID_UBOOT=""
+            AMLOGIC_SOC="s922x"
             ;;
         *)
             die "Have no this firmware: [ ${build_op} - ${kernel} ]"
             ;;
     esac
 
-    #Edit ${root}/* files ========== Begin ==========
+    # Edit ${root}/* files ========== Begin ==========
     cd ${root}
 
     # Add other operations below
@@ -232,66 +231,51 @@ utils() {
     mkdir -p boot run opt
     chown -R 0:0 ./
 
-    # Complete file: openwrt-install, openwrt-update, openwrt-kernel
-    [ -f usr/bin/openwrt-install ] || cp -f ${installfiles_path}/openwrt-install usr/bin/
-    [ -f usr/bin/openwrt-update ] || cp -f ${installfiles_path}/openwrt-update usr/bin/
-    [ -f usr/bin/openwrt-kernel ] || cp -f ${kernel_path}/build_kernel/openwrt-kernel usr/bin/
-
-    #Edit fstab
+    # Edit fstab
     ROOTFS_UUID=$(uuidgen)
     #echo "ROOTFS_UUID: ${ROOTFS_UUID}"
     sed -i "s/LABEL=ROOTFS/UUID=${ROOTFS_UUID}/" etc/fstab 2>/dev/null
     sed -i "s/option label 'ROOTFS'/option uuid '${ROOTFS_UUID}'/" etc/config/fstab 2>/dev/null
+    
+    # Turn off speed limit by default
+    [ -f etc/config/nft-qos ] && sed -i 's/option limit_enable.*/option limit_enable 0/g' etc/config/nft-qos
 
     # Add drivers
-    [ -f etc/modules.d/rtl8189fs ] || echo "8189fs" > etc/modules.d/rtl8189fs
-    [ -f etc/modules.d/rtl8188fu ] || echo "rtl8188fu" > etc/modules.d/rtl8188fu
+    [ -f etc/modules.d/8189fs ] || echo "8189fs" > etc/modules.d/8189fs
+    [ -f etc/modules.d/8188fu ] || echo "8188fu" > etc/modules.d/8188fu
     [ -f etc/modules.d/usb-net-rtl8150 ] || echo "rtl8150" > etc/modules.d/usb-net-rtl8150
     [ -f etc/modules.d/usb-net-rtl8152 ] || echo "r8152" > etc/modules.d/usb-net-rtl8152
     [ -f etc/modules.d/usb-net-asix-ax88179 ] || echo "ax88179_178a" > etc/modules.d/usb-net-asix-ax88179
 
-    # Add firmware information to the openwrt-env
-    echo "FDTFILE='${FDTFILE}'" >> lib/u-boot/openwrt-env 2>/dev/null
-    echo "U_BOOT_EXT='${U_BOOT_EXT}'" >> lib/u-boot/openwrt-env 2>/dev/null
-    echo "UBOOT_OVERLOAD='${UBOOT_OVERLOAD}'" >> lib/u-boot/openwrt-env 2>/dev/null
-    echo "MAINLINE_UBOOT='${MAINLINE_UBOOT}'" >> lib/u-boot/openwrt-env 2>/dev/null
-    echo "ANDROID_UBOOT='${ANDROID_UBOOT}'" >> lib/u-boot/openwrt-env 2>/dev/null
-    echo "AMLOGIC_SOC='${build_op}'" >> lib/u-boot/openwrt-env 2>/dev/null
-    echo "KERNEL_VERSION='${build_usekernel}'" >> lib/u-boot/openwrt-env 2>/dev/null
-    echo "K510='${K510}'" >> lib/u-boot/openwrt-env 2>/dev/null
+    # Add cpustat
+    cpustat_file=${configfiles_path}/patches/cpustat/cpustat.py
+    [ -f ${cpustat_file} ] && cp -f ${cpustat_file} usr/bin/cpustat && chmod +x usr/bin/cpustat >/dev/null 2>&1
+    
+    # Add firmware information to the etc/flippy-openwrt-release
+    echo "FDTFILE='${FDTFILE}'" >> etc/flippy-openwrt-release 2>/dev/null
+    echo "U_BOOT_EXT='${K510}'" >> etc/flippy-openwrt-release 2>/dev/null
+    echo "UBOOT_OVERLOAD='${UBOOT_OVERLOAD}'" >> etc/flippy-openwrt-release 2>/dev/null
+    echo "MAINLINE_UBOOT='${MAINLINE_UBOOT}'" >> etc/flippy-openwrt-release 2>/dev/null
+    echo "ANDROID_UBOOT='${ANDROID_UBOOT}'" >> etc/flippy-openwrt-release 2>/dev/null
+    echo "KERNEL_VERSION='${build_usekernel}'" >> etc/flippy-openwrt-release 2>/dev/null
+    echo "SOC='${AMLOGIC_SOC}'" >> etc/flippy-openwrt-release 2>/dev/null
+    echo "K510='${K510}'" >> etc/flippy-openwrt-release 2>/dev/null
+    # Compatible with the old version
+    ln -sf /etc/flippy-openwrt-release lib/u-boot/openwrt-env 2>/dev/null
 
     # Add firmware version information to the terminal page
     if  [ -f etc/banner ]; then
         op_version=$(echo $(ls lib/modules/ 2>/dev/null ))
         op_packaged_date=$(date +%Y-%m-%d)
-        echo " Amlogic SoC: ${build_op}" >> etc/banner
-        echo " Kernel: ${op_version}" >> etc/banner
-        if  [ "${K510}" -eq "1" ]; then
-            echo " Support install to EMMC: No" >> etc/banner
-        else
-            echo " Support install to EMMC: Yes" >> etc/banner
-        fi
         echo " Install command: openwrt-install" >> etc/banner
         echo " Update command: openwrt-update" >> etc/banner
         echo " Replace kernel command: openwrt-kernel" >> etc/banner
         echo " Backup & Restore command: openwrt-backup" >> etc/banner
-        echo " View version command: openwrt-version" >> etc/banner
+        echo " -----------------------------------------------------" >> etc/banner
+        echo " Amlogic SoC: ${build_op}" >> etc/banner
+        echo " OpenWrt Kernel: ${op_version}" >> etc/banner
         echo " Packaged Date: ${op_packaged_date}" >> etc/banner
         echo " -----------------------------------------------------" >> etc/banner
-    fi
-
-    source etc/openwrt_release 2>/dev/null
-    DISTRIB_RELEASE=${DISTRIB_RELEASE}
-    if  [[ "${DISTRIB_RELEASE}" != "21.02-SNAPSHOT" ]]; then
-        # Patches For openssl
-        SSL_CNF_PATCH=${configfiles_path}/patches/openssl/openssl_engine.patch
-        [ -f ${SSL_CNF_PATCH} ] && patch -p1 < ${SSL_CNF_PATCH} >/dev/null 2>&1
-
-        # Patches For cpustat
-        cpustat_file=${configfiles_path}/patches/cpustat/cpustat.py
-        cpustat_patch=${configfiles_path}/patches/cpustat/luci-admin-status-index-html.patch
-        [ -f ${cpustat_file} ] && cp -f ${cpustat_file} usr/bin/cpustat && chmod 755 usr/bin/cpustat >/dev/null 2>&1
-        [ -f ${cpustat_patch} ] && cd usr/lib/lua/luci/view/admin_status && patch -p0 < ${cpustat_patch} >/dev/null 2>&1
     fi
 
     sync
@@ -311,21 +295,26 @@ utils() {
 
     # Add u-boot.ext for 5.10 kernel
     if [[ "${K510}" -eq "1" && -n "${UBOOT_OVERLOAD}" ]]; then
-       if [ -f ${uboot_path}/${UBOOT_OVERLOAD} ]; then
-          cp -f ${uboot_path}/${UBOOT_OVERLOAD} u-boot.ext
+       if [ -f "${uboot_path}/${UBOOT_OVERLOAD}" ]; then
+          cp -f ${uboot_path}/${UBOOT_OVERLOAD} u-boot.ext && sync && chmod +x u-boot.ext
        else
           die "${build_usekernel} have no the 5.10 kernel u-boot file: [ ${UBOOT_OVERLOAD} ]"
        fi
     fi
 
+    # Add ${UBOOT_OVERLOAD} to support kernel update to 5.10 and above
+    if [[ -n "${UBOOT_OVERLOAD}" && -f "${uboot_path}/${UBOOT_OVERLOAD}" ]]; then
+        cp -f ${uboot_path}/${UBOOT_OVERLOAD} . && sync && chmod +x ${UBOOT_OVERLOAD}
+    fi
+
     sync
-    #Edit ${boot}/* files ========== End ==========
+    # Edit ${boot}/* files ========== End ==========
 }
 
 make_image() {
     cd ${make_path}
     build_op=${1}
-    build_image_file="${out_path}/openwrt_${build_op}_v${kernel}_$(date +"%Y.%m.%d.%H%M").img"
+    build_image_file="${out_path}/openwrt_${build_op}_k${kernel}_$(date +"%Y.%m.%d.%H%M").img"
     rm -f ${build_image_file}
     sync
 
@@ -378,6 +367,9 @@ copy2image() {
     umount -f ${bootfs} 2>/dev/null
     umount -f ${rootfs} 2>/dev/null
     losetup -d ${loop} 2>/dev/null
+    sync
+
+    cd ${out_path} && gzip *.img && sync && cd ${make_path}
 }
 
 get_firmwares() {
@@ -397,12 +389,12 @@ get_kernels() {
     i=0
     IFS=$'\n'
 
-    local kernel_root="${kernel_path}/kernel"
+    local kernel_root="${kernel_path}"
     [ -d ${kernel_root} ] && {
         work=$(pwd)
         cd ${kernel_root}
         for x in $(ls ./); do
-            [ "$( ls ${x}/*.tar.gz -l 2>/dev/null | grep "^-" | wc -l )" -eq "3" ] && kernels[i++]=${x}
+            [ "$( ls ${x}/*.tar.gz -l 2>/dev/null | grep "^-" | wc -l )" -ge "3" ] && kernels[i++]=${x}
         done
         cd ${work}
     }
@@ -410,7 +402,7 @@ get_kernels() {
 
 show_kernels() {
     if [ ${#kernels[*]} = 0 ]; then
-        die "No kernel files in [ ${kernel_path}/kernel ] directory!"
+        die "No kernel files in [ ${kernel_path} ] directory!"
     else
         show_list "${kernels[*]}" "kernel"
     fi
@@ -467,7 +459,6 @@ choose_build() {
         let i++
     done
     echo && read -p " Please select the Amlogic SoC: " pause
-    #read  pause
     case  $pause in
           s905x3 | 1) build="s905x3" ;;
           s905x2 | 2) build="s905x2" ;;
@@ -507,7 +498,7 @@ Usage:
 Options:
     -c, --clean            clean up the output and temporary directories
 
-    -d, --default          the kernel version is "all", and the rootfs partition size is "1024m"
+    -d, --default          the kernel version is "latest", and the rootfs partition size is "1024m"
 
     -b, --build=BUILD      Specify multiple cores, use "_" to connect
        , -b all            Compile all types of openwrt
@@ -529,10 +520,9 @@ Options:
 EOF
 }
 
-##
 [ $(id -u) = 0 ] || die "please run this script as root: [ sudo ./make ]"
-echo -e "Welcome to use the OpenWrt packaging tool!\n"
-echo -e "\n $(df -hT) \n"
+echo -e "Welcome to use the OpenWrt packaging tool! \n"
+echo -e "Server space usage before starting to compile: \n$(df -hT ${PWD}) \n"
 
 cleanup
 get_firmwares
@@ -551,7 +541,7 @@ while [ "${1}" ]; do
     -d | --default)
         : ${rootsize:=${ROOT_MB}}
         : ${firmware:="${firmwares[0]}"}
-        : ${kernel:="all"}
+        : ${kernel:="${kernels[-1]}"}
         : ${build:="all"}
         ;;
     -b | --build)
@@ -613,7 +603,7 @@ if [ ${#firmwares[*]} = 0 ]; then
 fi
 
 if [ ${#kernels[*]} = 0 ]; then
-    die "No this kernel files in [ ${kernel_path}/kernel ] directory!"
+    die "No this kernel files in [ ${kernel_path} ] directory!"
 fi
 
 [ ${firmware} ] && echo " firmware   ==>   ${firmware}"
@@ -627,31 +617,52 @@ fi
 [ ${build} ] || choose_build
 [ ${rootsize} ] || set_rootsize
 
-[ ${kernel} != "all" ] && unset kernels && kernels=("${kernel}")
-[ ${build} != "all" ] && unset build_openwrt && build_openwrt=("${build}")
+[ ${kernel} != "all" ] && unset kernels && kernels=(${kernel})
+[ ${build} != "all" ] && unset build_openwrt && build_openwrt=(${build})
 
-extract_openwrt
-
+k=1
 for b in ${build_openwrt[*]}; do
+
+    i=1
     for x in ${kernels[*]}; do
         {
+            echo -n "(${k}.${i}) Start packaging OpenWrt [ ${b} - ${x} ]. "
+
+            now_remaining_space=$(df -hT ${PWD} | grep '/dev/' | awk '{print $5}' | sed 's/.$//')
+            if  [[ "${now_remaining_space}" -le "2" ]]; then
+                echo "Remaining space is less than 2G, exit this packaging. \n"
+                break 2
+            else
+                echo "Remaining space is ${now_remaining_space}G."
+            fi
+            
             kernel=${x}
             build=${b}
-            process " extract armbian files."
+            process " (1/6) extract armvirt files."
+            extract_openwrt
+            process " (2/6) extract armbian files."
             extract_armbian ${b}
-            utils ${b} ${x}
-            process " make openwrt image."
+            process " (3/6) refactor related files."
+            refactor_files ${b} ${x}
+            process " (4/6) make openwrt image."
             make_image ${b}
-            process " copy files to image."
+            process " (5/6) copy files to image."
             copy2image ${b}
-            process " generate success."
-        } &
+            process " (6/6) cleanup tmp files."
+            cleanup
+            
+            echo -e "(${k}.${i}) OpenWrt packaged successfully. \n"
+            
+            let i++
+        }
     done
+    
+    let k++
 done
 
-wait
-echo -e "\n $(df -hT) \n"
+cp -f ${openwrt_path}/*.tar.gz ${out_path} 2>/dev/null && sync
+echo -e "Server space usage after compilation: \n$(df -hT ${PWD}) \n"
 
-cleanup
+wait
 chmod -R 777 ${out_path}
 
